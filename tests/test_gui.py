@@ -1,6 +1,8 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
+import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -53,6 +55,72 @@ class GUIRegressionTests(unittest.TestCase):
         self.window.translate()
         for language in self.languages:
             language.get_translation.assert_not_called()
+
+    def wait_until(self, predicate):
+        deadline = time.monotonic() + 3
+        while not predicate() and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.005)
+        self.assertTrue(predicate())
+
+    def test_removal_discards_running_and_queued_results(self):
+        self.check_obsolete_translation(remove_languages=True)
+
+    def test_unsupported_pair_discards_running_and_queued_results(self):
+        self.check_obsolete_translation(remove_languages=False)
+
+    def check_obsolete_translation(self, remove_languages):
+        release = threading.Event()
+        started = threading.Event()
+        calls = []
+
+        def translate(text):
+            calls.append(text)
+            started.set()
+            release.wait(3)
+            return 'obsolete result'
+
+        self.languages[0].get_translation.return_value = Mock(translate=translate)
+        self.window.left_textEdit.setPlainText('first')
+        try:
+            self.assertTrue(started.wait(3))
+            self.window.left_textEdit.setPlainText('second')
+            self.assertIsNotNone(self.window.queued_translation)
+            if remove_languages:
+                self.languages = []
+                self.window.load_languages()
+            else:
+                self.languages[0].get_translation.return_value = None
+                self.window.translate()
+            self.assertIsNone(self.window.queued_translation)
+        finally:
+            release.set()
+            self.wait_until(lambda: self.window.worker_thread is None)
+        self.assertEqual(calls, ['first'])
+        self.assertEqual(self.window.right_textEdit.toPlainText(), '')
+
+    def test_latest_translation_replaces_pending_work(self):
+        release = threading.Event()
+        started = threading.Event()
+        calls = []
+
+        def translate(text):
+            calls.append(text)
+            started.set()
+            release.wait(3)
+            return text.upper()
+
+        self.languages[0].get_translation.return_value = Mock(translate=translate)
+        self.window.left_textEdit.setPlainText('first')
+        try:
+            self.assertTrue(started.wait(3))
+            self.window.left_textEdit.setPlainText('second')
+            self.window.left_textEdit.setPlainText('latest')
+        finally:
+            release.set()
+            self.wait_until(lambda: self.window.worker_thread is None)
+        self.assertEqual(calls, ['first', 'latest'])
+        self.assertEqual(self.window.right_textEdit.toPlainText(), 'LATEST')
 
     def test_uninstall_emits_one_change_after_refresh(self):
         table = gui.PackagesTable.__new__(gui.PackagesTable)

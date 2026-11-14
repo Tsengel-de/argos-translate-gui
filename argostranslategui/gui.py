@@ -33,18 +33,19 @@ class WorkerThread(QThread):
 
 
 class TranslationThread(QThread):
-    send_text_update = pyqtSignal(str)
+    send_text_update = pyqtSignal(int, str)
 
-    def __init__(self, translation_function, show_loading_message):
+    def __init__(self, translation_function, show_loading_message, request_id):
         super().__init__()
         self.translation_function = translation_function
         self.show_loading_message = show_loading_message
+        self.request_id = request_id
 
     def run(self):
         if self.show_loading_message:
-            self.send_text_update.emit("Loading...")
+            self.send_text_update.emit(self.request_id, "Loading...")
         translated_text = self.translation_function()
-        self.send_text_update.emit(translated_text)
+        self.send_text_update.emit(self.request_id, translated_text)
 
 
 class WorkerStatusButton(QPushButton):
@@ -330,6 +331,7 @@ class GUIWindow(QMainWindow):
         # the currently running TranslationThread finishes.
         # None if there is no waiting TranslationThread.
         self.queued_translation = None
+        self.translation_request_id = 0
 
         # Language selection
         self.left_language_combo = QComboBox()
@@ -380,11 +382,15 @@ class GUIWindow(QMainWindow):
         self.setWindowTitle("Argos Translate")
 
     def swap_languages_button_clicked(self):
+        blockers = [QSignalBlocker(self.left_language_combo),
+                    QSignalBlocker(self.right_language_combo)]
         left_index = self.left_language_combo.currentIndex()
         self.left_language_combo.setCurrentIndex(
             self.right_language_combo.currentIndex()
         )
         self.right_language_combo.setCurrentIndex(left_index)
+        del blockers
+        self.translate()
 
     def about_action_triggered(self):
         about_message_box = QMessageBox()
@@ -416,8 +422,9 @@ class GUIWindow(QMainWindow):
         del blockers
         self.translate()
 
-    def update_right_textEdit(self, text):
-        self.right_textEdit.setPlainText(text)
+    def update_right_textEdit(self, request_id, text):
+        if request_id == self.translation_request_id:
+            self.right_textEdit.setPlainText(text)
 
     def handle_worker_thread_finished(self):
         self.worker_thread = None
@@ -428,6 +435,9 @@ class GUIWindow(QMainWindow):
 
     def translate(self):
         """Try to translate based on languages selected."""
+        self.translation_request_id += 1
+        self.queued_translation = None
+        self.right_textEdit.clear()
         if len(self.languages) < 1:
             return
         input_text = self.left_textEdit.toPlainText()
@@ -443,7 +453,8 @@ class GUIWindow(QMainWindow):
             bound_translation_function = partial(translation.translate, input_text)
             show_loading_message = len(input_text) > self.SHOW_LOADING_THRESHOLD
             new_worker_thread = TranslationThread(
-                bound_translation_function, show_loading_message
+                bound_translation_function, show_loading_message,
+                self.translation_request_id,
             )
             new_worker_thread.send_text_update.connect(self.update_right_textEdit)
             new_worker_thread.finished.connect(self.handle_worker_thread_finished)
