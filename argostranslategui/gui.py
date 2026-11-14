@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from enum import Enum
 from functools import partial
@@ -503,6 +504,12 @@ class GUIWindow(QMainWindow):
 
 class GUIApplication:
     def __init__(self):
+        # PyTorch can lazily load Triton's LLVM libraries during translation.
+        # Load them before Qt initializes native libraries to avoid a startup
+        # crash in libtriton. Triton is absent from some PyTorch installations.
+        if importlib.util.find_spec("triton") is not None:
+            importlib.import_module("triton")
+
         self.app = QApplication([])
         self.main_window = GUIWindow()
 
