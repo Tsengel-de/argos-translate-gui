@@ -203,7 +203,6 @@ class PackagesTable(QTableWidget):
                 error_message_box.exec_()
             else:
                 raise e
-        self.packages_changed.emit()
         self.populate()
         self.packages_changed.emit()
 
@@ -400,16 +399,21 @@ class GUIWindow(QMainWindow):
         self.packages_window.show()
 
     def load_languages(self):
+        left_code = self.left_language_combo.currentData()
+        right_code = self.right_language_combo.currentData()
         self.languages = translate.load_installed_languages()
-        language_names = tuple([language.name for language in self.languages])
-        self.left_language_combo.clear()
-        self.left_language_combo.addItems(language_names)
-        if len(language_names) > 0:
-            self.left_language_combo.setCurrentIndex(0)
-        self.right_language_combo.clear()
-        self.right_language_combo.addItems(language_names)
-        if len(language_names) > 1:
-            self.right_language_combo.setCurrentIndex(1)
+        blockers = [QSignalBlocker(self.left_language_combo),
+                    QSignalBlocker(self.right_language_combo)]
+        for combo, code, default in (
+            (self.left_language_combo, left_code, 0),
+            (self.right_language_combo, right_code, min(1, len(self.languages) - 1)),
+        ):
+            combo.clear()
+            for language in self.languages:
+                combo.addItem(language.name, language.code)
+            index = combo.findData(code) if code is not None else -1
+            combo.setCurrentIndex(index if index >= 0 else default)
+        del blockers
         self.translate()
 
     def update_right_textEdit(self, text):
@@ -428,8 +432,11 @@ class GUIWindow(QMainWindow):
             return
         input_text = self.left_textEdit.toPlainText()
         input_combo_value = self.left_language_combo.currentIndex()
-        input_language = self.languages[input_combo_value]
         output_combo_value = self.right_language_combo.currentIndex()
+        if not (0 <= input_combo_value < len(self.languages)
+                and 0 <= output_combo_value < len(self.languages)):
+            return
+        input_language = self.languages[input_combo_value]
         output_language = self.languages[output_combo_value]
         translation = input_language.get_translation(output_language)
         if translation:
