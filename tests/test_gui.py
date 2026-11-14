@@ -122,6 +122,55 @@ class GUIRegressionTests(unittest.TestCase):
         self.assertEqual(calls, ['first', 'latest'])
         self.assertEqual(self.window.right_textEdit.toPlainText(), 'LATEST')
 
+    def test_failed_download_can_retry_and_succeed(self):
+        operation = Mock(side_effect=[OSError('network unavailable'), None])
+        button = gui.WorkerStatusButton('Download', operation)
+        button.click()
+        self.assertFalse(button.isEnabled())
+        self.wait_until(lambda: button.status != button.Status.RUNNING)
+        self.assertEqual(button.status, button.Status.FAILED)
+        self.assertEqual(gui.QPushButton.text(button), 'Retry')
+        self.assertIn('network unavailable', button.toolTip())
+        self.assertTrue(button.isEnabled())
+        button.click()
+        self.wait_until(lambda: button.status != button.Status.RUNNING)
+        self.assertEqual(button.status, button.Status.DONE)
+        self.assertEqual(gui.QPushButton.text(button), '✓')
+        self.assertEqual(operation.call_count, 2)
+        button.deleteLater()
+
+    def test_translation_failure_is_visible_and_recoverable(self):
+        operation = Mock(side_effect=[RuntimeError('model failed'), 'recovered'])
+        self.languages[0].get_translation.return_value = Mock(translate=operation)
+        self.window.left_textEdit.setPlainText('first')
+        self.wait_until(lambda: self.window.worker_thread is None)
+        self.assertEqual(self.window.right_textEdit.toPlainText(),
+                         'Translation failed: model failed')
+        self.window.left_textEdit.setPlainText('retry')
+        self.wait_until(lambda: self.window.worker_thread is None)
+        self.assertEqual(self.window.right_textEdit.toPlainText(), 'recovered')
+
+    def test_obsolete_translation_failure_does_not_overwrite_output(self):
+        release = threading.Event()
+        started = threading.Event()
+
+        def translate(text):
+            if text == 'first':
+                started.set()
+                release.wait(3)
+                raise RuntimeError('obsolete failure')
+            return 'latest result'
+
+        self.languages[0].get_translation.return_value = Mock(translate=translate)
+        self.window.left_textEdit.setPlainText('first')
+        try:
+            self.assertTrue(started.wait(3))
+            self.window.left_textEdit.setPlainText('latest')
+        finally:
+            release.set()
+            self.wait_until(lambda: self.window.worker_thread is None)
+        self.assertEqual(self.window.right_textEdit.toPlainText(), 'latest result')
+
     def test_uninstall_emits_one_change_after_refresh(self):
         table = gui.PackagesTable.__new__(gui.PackagesTable)
         with patch.object(gui.package, 'get_installed_packages', return_value=[]):

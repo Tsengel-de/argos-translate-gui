@@ -19,6 +19,8 @@ class PlainPasteTextEdit(QTextEdit):
 
 class WorkerThread(QThread):
     """Runs a bound function on a thread"""
+    succeeded = pyqtSignal()
+    failed = pyqtSignal(str)
 
     def __init__(self, bound_worker_function):
         """Args:
@@ -29,11 +31,17 @@ class WorkerThread(QThread):
         self.finished.connect(self.deleteLater)
 
     def run(self):
-        self.bound_worker_function()
+        try:
+            self.bound_worker_function()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.succeeded.emit()
 
 
 class TranslationThread(QThread):
     send_text_update = pyqtSignal(int, str)
+    failed = pyqtSignal(int, str)
 
     def __init__(self, translation_function, show_loading_message, request_id):
         super().__init__()
@@ -44,8 +52,12 @@ class TranslationThread(QThread):
     def run(self):
         if self.show_loading_message:
             self.send_text_update.emit(self.request_id, "Loading...")
-        translated_text = self.translation_function()
-        self.send_text_update.emit(self.request_id, translated_text)
+        try:
+            translated_text = self.translation_function()
+        except Exception as exc:
+            self.failed.emit(self.request_id, str(exc))
+        else:
+            self.send_text_update.emit(self.request_id, translated_text)
 
 
 class WorkerStatusButton(QPushButton):
@@ -53,6 +65,7 @@ class WorkerStatusButton(QPushButton):
         NOT_STARTED = 0
         RUNNING = 1
         DONE = 2
+        FAILED = 3
 
     def __init__(self, text, bound_worker_function):
         super().__init__(text)
@@ -63,24 +76,39 @@ class WorkerStatusButton(QPushButton):
 
     def clicked_handler(self):
         info("WorkerStatusButton clicked_handler")
-        if self.status == self.Status.NOT_STARTED:
+        if self.status in (self.Status.NOT_STARTED, self.Status.FAILED):
+            self.worker_succeeded = False
             self.worker_thread = WorkerThread(self.bound_worker_function)
+            self.worker_thread.succeeded.connect(self.succeeded_handler)
+            self.worker_thread.failed.connect(self.failed_handler)
             self.worker_thread.finished.connect(self.finished_handler)
             self.set_status(self.Status.RUNNING)
             self.worker_thread.start()
 
     def finished_handler(self):
         info("WorkerStatusButton finished_handler")
-        self.set_status(self.Status.DONE)
+        self.worker_thread = None
+        self.set_status(self.Status.DONE if self.worker_succeeded else self.Status.FAILED)
+
+    def succeeded_handler(self):
+        self.worker_succeeded = True
+
+    def failed_handler(self, message):
+        error(message)
+        self.setToolTip("Operation failed: " + message + "\nClick to retry.")
 
     def set_status(self, status):
         self.status = status
         if self.status == self.Status.NOT_STARTED:
             self.setText(self.text)
         elif self.status == self.Status.RUNNING:
+            self.setToolTip("")
             self.setText("⌛")
         elif self.status == self.Status.DONE:
             self.setText("✓")
+        elif self.status == self.Status.FAILED:
+            self.setText("Retry")
+        self.setEnabled(status in (self.Status.NOT_STARTED, self.Status.FAILED))
 
 
 class PackagesTable(QTableWidget):
@@ -426,6 +454,10 @@ class GUIWindow(QMainWindow):
         if request_id == self.translation_request_id:
             self.right_textEdit.setPlainText(text)
 
+    def translation_failed(self, request_id, message):
+        error(message)
+        self.update_right_textEdit(request_id, "Translation failed: " + message)
+
     def handle_worker_thread_finished(self):
         self.worker_thread = None
         if self.queued_translation is not None:
@@ -457,6 +489,7 @@ class GUIWindow(QMainWindow):
                 self.translation_request_id,
             )
             new_worker_thread.send_text_update.connect(self.update_right_textEdit)
+            new_worker_thread.failed.connect(self.translation_failed)
             new_worker_thread.finished.connect(self.handle_worker_thread_finished)
             if self.worker_thread is None:
                 self.worker_thread = new_worker_thread
