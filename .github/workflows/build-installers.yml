@@ -1,0 +1,120 @@
+name: Build Desktop Installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PyQt5 ctranslate2 sentencepiece
+          pip install git+https://github.com/Tsengel-de/argos-translate.git
+          pip install .
+
+      - name: Build Windows Executable
+        run: |
+          pyinstaller --name "ArgosTranslate-Windows-x64" --windowed --onefile bin/argos-translate-gui
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/ArgosTranslate-Windows-x64.exe
+
+  build-macos:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PyQt5 ctranslate2 sentencepiece
+          pip install git+https://github.com/Tsengel-de/argos-translate.git
+          pip install .
+
+      - name: Build macOS App & DMG
+        run: |
+          pyinstaller --name "ArgosTranslate" --windowed --osx-bundle-identifier "de.tsengel.argostranslate" bin/argos-translate-gui
+          hdiutil create -volname "ArgosTranslate" -srcfolder dist/ArgosTranslate.app -ov -format UDZO dist/ArgosTranslate-macOS.dmg
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: dist/ArgosTranslate-macOS.dmg
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libegl1-mesa libxkbcommon-x11-0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PyQt5 ctranslate2 sentencepiece
+          pip install git+https://github.com/Tsengel-de/argos-translate.git
+          pip install .
+
+      - name: Build Linux Standalone Binary
+        run: |
+          pyinstaller --name "ArgosTranslate-Linux-x86_64" --onefile bin/argos-translate-gui
+          chmod +x dist/ArgosTranslate-Linux-x86_64
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: dist/ArgosTranslate-Linux-x86_64
+
+  release:
+    needs: [build-windows, build-macos, build-linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release_assets/**/*.exe
+            release_assets/**/*.dmg
+            release_assets/**/ArgosTranslate-Linux-x86_64
+            LICENSE_NONCOMMERCIAL.md
