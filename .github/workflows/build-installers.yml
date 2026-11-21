@@ -38,7 +38,7 @@ jobs:
           path: dist/ArgosTranslate-Windows-x64.exe
 
   build-macos:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -78,7 +78,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-glx libegl1-mesa libxkbcommon-x11-0
+          sudo apt-get install -y libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0
 
       - name: Install Python dependencies
         run: |
@@ -111,7 +111,7 @@ jobs:
           path: release_assets
 
       - name: Publish to GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             release_assets/**/*.exe
